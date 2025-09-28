@@ -1,12 +1,10 @@
-name: CI
+name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [staging]
   pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 3 * * *'
+    branches: [staging]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,9 +30,6 @@ jobs:
         with:
           version: 9
       - run: pnpm install --frozen-lockfile
-
-      - name: Run migrations
-        run: pnpm --filter services/auth run migrate
 
       - name: Cache tooling
         uses: actions/cache@v4
@@ -89,8 +84,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc --project tsconfig.json --noEmit
 
-  unit:
-    name: Unit Tests
+  unit_node20:
+    name: Unit Tests (node20)
     needs: setup
     runs-on: ubuntu-latest
     strategy:
@@ -126,9 +121,9 @@ jobs:
           name: junit-unit-${{ matrix.shard }}
           path: junit-unit-${{ matrix.shard }}.xml
 
-  integration:
-    name: Integration Tests
-    needs: [setup, lint, typecheck, unit]
+  integration_pg_redis:
+    name: Integration Tests (pg+redis)
+    needs: [setup, lint, typecheck, unit_node20]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -215,9 +210,33 @@ jobs:
             postgres.log
             redis.log
 
+  secrets:
+    name: Secret Scan (gitleaks)
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --no-git --verbose
+
+  dependency_review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
   coverage:
     name: Coverage & Thresholds
-    needs: [unit, integration]
+    needs: [unit_node20, integration_pg_redis]
     runs-on: ubuntu-latest
     env:
       NODE_ENV: test
