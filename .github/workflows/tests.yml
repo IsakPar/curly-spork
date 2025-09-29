@@ -2,9 +2,9 @@ name: tests
 
 on:
   push:
-    branches: [staging]
+    branches: [staging, main]
   pull_request:
-    branches: [staging]
+    branches: [staging, main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20.x'
+      - run: corepack enable
+      - run: corepack prepare pnpm@9 --activate
 
       - uses: pnpm/action-setup@v4
         with:
@@ -51,6 +53,8 @@ jobs:
       STORAGE_DRIVER: postgres
       DATABASE_URL: postgres://sanctum:sanctum@localhost:5432/sanctum
       REDIS_URL: redis://localhost:6379
+      # Use service hostname for Redis in integration
+      REDIS_URL: redis://redis:6379
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -132,23 +136,25 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: postgres
-        ports: ['55432:5432']
         options: >-
-          --health-cmd="pg_isready -U postgres -d postgres"
-          --health-interval=5s --health-timeout=5s --health-retries=20
+              --health-cmd="pg_isready -U postgres -d postgres"
+              --health-interval=5s
+              --health-timeout=5s
+              --health-retries=20
       redis:
         image: redis:7-alpine
-        ports: ['6379:6379']
         options: >-
-          --health-cmd="redis-cli ping || exit 1"
-          --health-interval=5s --health-timeout=5s --health-retries=20
+              --health-cmd="redis-cli ping || exit 1"
+              --health-interval=5s
+              --health-timeout=5s
+              --health-retries=20
     env:
       NODE_ENV: test
       TZ: UTC
       STORAGE_DRIVER: postgres
       POSTGRES_URL: postgres://postgres:postgres@postgres:5432/postgres
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
-      REDIS_URL: redis://localhost:6379
+      REDIS_URL: redis://redis:6379
       CAPTCHA_PROVIDER: none
       KMS_MODE: inmemory
       RATE_LIMIT_DISABLED: 'true'
@@ -163,17 +169,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Wait for Postgres
+        shell: bash
         run: |
-          for i in {1..30}; do
-            pg_isready -h postgres -p 5432 -U postgres && break;
-            sleep 2;
+          for i in {1..60}; do
+            (echo > /dev/tcp/postgres/5432) >/dev/null 2>&1 && break
+            sleep 2
           done
 
       - name: Wait for Redis
+        shell: bash
         run: |
-          for i in {1..30}; do
-            docker exec ${{ job.services.redis.id }} redis-cli ping && break;
-            sleep 2;
+          for i in {1..60}; do
+            (echo > /dev/tcp/redis/6379) >/dev/null 2>&1 && break
+            sleep 2
           done
 
       - name: Run migrations
